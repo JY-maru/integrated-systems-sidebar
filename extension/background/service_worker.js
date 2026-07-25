@@ -1,7 +1,7 @@
 'use strict'
 // 허브: 콘텐츠 스크립트 간 직접 통신이 불가능한 구조적 제약을 메우는
 // switch-case 디스패처. content script 쪽(message_router.js, 맵 기반)과
-// 의도적으로 다른 스타일을 유지한다 (REFERENCE.md §4-3 참고 — 알려진 불일치).
+// 의도적으로 다른 스타일을 유지한다 (README.md §3-3 참고 — 알려진 불일치).
 
 importScripts('../js/config.js')
 
@@ -31,7 +31,7 @@ function logToSheet(entry) {
     .catch((err) => console.warn('[background] 로그 기록 실패', err))
 }
 
-// find-or-create-tab 패턴 (REFERENCE.md §6). 필요한 시스템의 탭이 열려
+// find-or-create-tab 패턴 (README.md §5). 필요한 시스템의 탭이 열려
 // 있지 않으면 대신 열어준다. 4~5곳에서 거의 동일한 모양으로 재사용된다.
 // focus:true면 자동화 대상 탭을 화면 앞으로 가져와, 값이 순서대로 채워지는
 // 과정을 사용자가 직접 눈으로 볼 수 있게 한다 (B/C처럼 사용자가 버튼을 눌러

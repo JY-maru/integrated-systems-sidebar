@@ -38,7 +38,7 @@ function init() {
 
 async function handleCreateCase() {
   // 임베드 폼(별도 오리진)에 현재 입력값을 요청 → 교차검증.
-  // 타임아웃/빈 값이면 처리 중단 (REFERENCE.md §8 "값 불일치 → 처리 중단"과 동일한 방어).
+  // 타임아웃/빈 값이면 처리 중단 (README.md §7 "값 불일치 → 처리 중단"과 동일한 방어).
   const rawText = await SPOG_MESSAGE_ROUTER.requestIframeData('intake_text')
   if (!rawText) {
     window.alert('접수양식 값을 가져오지 못했습니다. 임베드 폼에 내용을 입력했는지 확인하세요.')

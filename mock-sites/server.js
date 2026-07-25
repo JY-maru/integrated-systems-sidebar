@@ -1,7 +1,7 @@
 'use strict'
 // 의존성 0개: Node 내장 http/fs만 사용해 6개 오리진(포트)을 기동한다.
 // 각 포트는 하나의 "사내 시스템"을 흉내낸다. 실제 시스템의 이름/도메인/필드명은
-// REFERENCE.md와 마찬가지로 일반화되어 있다.
+// README.md와 마찬가지로 일반화되어 있다.
 
 const http = require('http')
 const fs = require('fs')

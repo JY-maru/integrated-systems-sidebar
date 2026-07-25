@@ -1,7 +1,6 @@
 'use strict'
 // 사이드바 DOM 생성 (아이콘 레일 + 콘텐츠 패널 2컬럼), 패널 전환, 배지/트랙-닷/
-// 상태-닷 렌더링. 배치·치수·컴포넌트 종류는 SIDEBAR_UI_SPEC.md를 따르되
-// 라벨은 이 프로젝트 용어로 채운다.
+// 상태-닷 렌더링.
 // 비즈니스 로직(무엇을 보낼지)은 content_a.js가 담당하고, 이 모듈은
 // "그리기"와 "콜백 연결"만 한다.
 
@@ -171,7 +170,7 @@ const SPOG_UI = (() => {
 
   // 인터럽트 기반 자동 전환: 사용자가 어느 패널에 있든, 접수 카드가 생성되면
   // 강제로 케이스 처리 패널로 전환한다 ("지금 보고 있는 화면"보다 "지금 가장
-  // 중요한 업무"를 우선시하는 의도적인 UX 선택 — REFERENCE.md §7).
+  // 중요한 업무"를 우선시하는 의도적인 UX 선택 — README.md §6).
   function onCriticalEventDetected(caseData) {
     renderCaseDetail(caseData)
     switchToPanel('case')

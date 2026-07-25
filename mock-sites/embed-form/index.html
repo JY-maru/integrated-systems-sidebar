@@ -23,7 +23,7 @@
 식별코드: AB-1234
 접수일시: 2026-07-25 14:30
 위치: 서울시 강남구
-상세내용: 후방 추돌사고`
+상세내용: 일반 문의 접수`
 
   function App() {
     const [text, setText] = React.useState('')
@@ -33,7 +33,7 @@
     React.useEffect(() => {
       // System A 콘텐츠 스크립트(message_router.js)가 REQUEST_DATA(kind:'intake_text')를
       // window.postMessage로 보내면, 현재 textarea 값을 RESPONSE_DATA로 응답한다.
-      // REFERENCE.md §4-2 패턴: 요청ID 없이 kind로만 매칭.
+      // README.md §3-2 패턴: 요청ID 없이 kind로만 매칭.
       function onMessage(event) {
         const msg = event.data
         if (!msg || msg.type !== 'REQUEST_DATA' || msg.kind !== 'intake_text') return

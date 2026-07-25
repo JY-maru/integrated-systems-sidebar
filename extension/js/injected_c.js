@@ -1,6 +1,6 @@
 'use strict'
 // 페이지 컨텍스트(MAIN world) 주입. 블록/예약 생성 두 엔드포인트의 응답을
-// 가로채 kind로 구분해 되돌려준다. (REFERENCE.md §4-1)
+// 가로채 kind로 구분해 되돌려준다. (README.md §3-1)
 
 ;(() => {
   const originalFetch = window.fetch

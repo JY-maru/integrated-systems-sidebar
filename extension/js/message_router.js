@@ -11,7 +11,7 @@ const SPOG_MESSAGE_ROUTER = (() => {
 
   // 임베드 폼에 현재 값을 요청한다. 요청ID 없이 kind로만 매칭하고,
   // 동시에 하나만 대기한다는 전제하에 타임아웃 시 null을 반환한다.
-  // (REFERENCE.md §4-2 패턴)
+  // (README.md §3-2 패턴)
   function requestIframeData(kind) {
     return new Promise((resolve) => {
       if (!embedFrameWindow) return resolve(null)
