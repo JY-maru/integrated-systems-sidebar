@@ -7,12 +7,11 @@
 > 실제 사내 시스템명·도메인·필드명은 모두 제거하고 일반화했습니다. 아래 아키텍처 설명은
 > `mock-sites/`(로컬 목업)가 아니라 **실제로 동작하는 `extension/` 코드**를 기준으로 합니다.
 
-> 데모 영상: [`docs/demo.mov`](./docs/demo.mov) — 접수 카드 생성부터 사후관리 로그까지
-> 전체 파이프라인이 실제 크롬 확장 동작으로 이어지는 모습입니다.
+<video src="./docs/demo.mp4" autoplay loop muted playsinline controls width="720">
+데모 영상: <a href="./docs/demo.mp4">docs/demo.mp4</a>
+</video>
 
-<img src="./docs/sidebar-preview.png" width="320" alt="실제 동작 중인 사이드바 UI 미리보기 (텍스트는 블러 처리)" />
-
-*실제 동작 중인 사이드바 UI (세부 텍스트는 블러 처리했습니다 — 전체 화면은 위 데모 영상 참고)*
+*접수 카드 생성부터 사후관리 로그까지 전체 파이프라인이 실제 크롬 확장 동작으로 이어지는 모습입니다.*
 
 ## 왜 만들었는가
 
@@ -427,7 +426,7 @@ npm run dev   # node mock-sites/server.js — 의존성 설치 불필요
 extension/            크롬 확장 (Manifest V3, 번들러 없음)
 mock-sites/           로컬 목업 6개 오리진 (Node 내장 http만 사용, 의존성 0)
   vendor/             React/ReactDOM UMD 로컬 벤더링 (목업 페이지 전용)
-docs/demo.mov         데모 영상
+docs/demo.mp4         데모 영상 (README에 자동재생 임베드)
 ```
 
 ## License
