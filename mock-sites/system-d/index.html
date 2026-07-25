@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<title>System D · 고객 응대 (mock)</title>
+<style>
+  body { font-family: -apple-system, sans-serif; margin: 0; background: #f4f6f8; color: #1b1f24; }
+  header { background: #4a2f7a; color: #fff; padding: 16px 24px; }
+  header h1 { margin: 0; font-size: 18px; }
+  main { padding: 24px; max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
+  .card { background: #fff; border-radius: 8px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  .card h2 { margin: 0 0 12px; font-size: 15px; }
+  button { padding: 9px 16px; font-size: 13px; background: #4a2f7a; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
+  ul#callback-history { list-style: none; margin: 12px 0 0; padding: 0; font-size: 13px; }
+  ul#callback-history li { padding: 8px; border-bottom: 1px solid #eee; }
+  textarea#customer-memo { width: 100%; box-sizing: border-box; height: 140px; font-size: 13px; padding: 8px; border: 1px solid #ccc; border-radius: 6px; font-family: inherit; }
+  .demo-banner { background: #f5c518; color: #1b1f24; font-weight: 800; font-size: 12px; text-align: center; padding: 7px 12px; letter-spacing: .2px; }
+</style>
+</head>
+<body>
+<div class="demo-banner">⚠ 데모용 예시 화면입니다 — 실제 사내 시스템이 아닙니다</div>
+<div id="root"></div>
+
+<script src="/vendor/react.production.min.js"></script>
+<script src="/vendor/react-dom.production.min.js"></script>
+<script>
+  const h = React.createElement
+
+  // 인바운드 콜백 이력. 확장(content_d.js)은 이 리스트에 새 li가 추가되는 것을
+  // MutationObserver로 감지해 인바운드 이벤트를 발생시킨다.
+  function CallbackHistory() {
+    const [history, setHistory] = React.useState([])
+
+    async function simulate() {
+      const res = await fetch('/api/callbacks', { method: 'POST' })
+      const data = await res.json()
+      setHistory((prev) => [...prev, data])
+    }
+
+    return h('div', { className: 'card' },
+      h('h2', null, '인바운드 콜백 이력'),
+      h('button', { id: 'simulate-callback-btn', onClick: simulate }, '콜백 발생 시뮬레이션'),
+      h('ul', { id: 'callback-history' },
+        history.map((cb) => h('li', {
+          key: cb.id,
+          'data-id': cb.id,
+          'data-customer': cb.customerName,
+          'data-phone': cb.phone,
+          'data-time': cb.time,
+          'data-reason': cb.reason,
+        }, `[${cb.time}] ${cb.customerName} (${cb.phone}) — ${cb.reason}`))
+      )
+    )
+  }
+
+  // 응대 메모. 예약/배차 관리(System C)에서 예약이 생성되면 확장이
+  // 네이티브 value setter + dispatchEvent('input')로 이 textarea에 자동 삽입한다.
+  function ResponseMemo() {
+    const [memo, setMemo] = React.useState('')
+
+    return h('div', { className: 'card' },
+      h('h2', null, '응대 메모'),
+      h('p', { style: { fontSize: '12px', color: '#777', margin: '0 0 8px' } },
+        '예약/배차 관리 시스템에서 고객 예약이 생성되면, 확장이 이 메모에 예약정보를 자동으로 채워 넣습니다.'
+      ),
+      h('textarea', {
+        id: 'customer-memo',
+        placeholder: '응대 내용을 기록하세요...',
+        value: memo,
+        onChange: (e) => setMemo(e.target.value),
+      })
+    )
+  }
+
+  function App() {
+    return h(React.Fragment, null,
+      h('header', null, h('h1', null, '고객 응대 (System D)')),
+      h('main', null, h(CallbackHistory), h(ResponseMemo))
+    )
+  }
+
+  ReactDOM.createRoot(document.getElementById('root')).render(h(App))
+</script>
+</body>
+</html>

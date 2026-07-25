@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<title>System B · 케이스 관리 (mock)</title>
+<style>
+  body { font-family: -apple-system, sans-serif; margin: 0; background: #f4f6f8; color: #1b1f24; }
+  header { background: #7a2323; color: #fff; padding: 16px 24px; }
+  header h1 { margin: 0; font-size: 18px; }
+  main { padding: 24px; max-width: 640px; margin: 0 auto; }
+  .card { background: #fff; border-radius: 8px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  label { display: block; font-size: 12px; color: #555; margin: 12px 0 4px; }
+  input, textarea { width: 100%; box-sizing: border-box; padding: 8px; font-size: 14px; border: 1px solid #ccc; border-radius: 4px; font-family: inherit; }
+  button { margin-top: 18px; padding: 10px 18px; font-size: 14px; background: #7a2323; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
+  button:disabled { background: #bba; cursor: default; }
+  #result { margin-top: 16px; padding: 12px; background: #eef7ee; border: 1px solid #bfe3bf; border-radius: 6px; font-size: 13px; }
+  .demo-banner { background: #f5c518; color: #1b1f24; font-weight: 800; font-size: 12px; text-align: center; padding: 7px 12px; letter-spacing: .2px; }
+</style>
+</head>
+<body>
+<div class="demo-banner">⚠ 데모용 예시 화면입니다 — 실제 사내 시스템이 아닙니다</div>
+<div id="root"></div>
+
+<script src="/vendor/react.production.min.js"></script>
+<script src="/vendor/react-dom.production.min.js"></script>
+<script>
+  const h = React.createElement
+
+  // 케이스 카드 생성 폼. 필드는 리액트 controlled input으로 상태에 반영된다.
+  // 확장의 RPA 자동화(content_b.js)는 네이티브 value setter + dispatchEvent('input')
+  // 트릭으로 이 상태를 갱신해야 한다 (input.value = x 로는 리액트가 감지 못함).
+  function CaseForm() {
+    const [fields, setFields] = React.useState({
+      name: '', phone: '', code: '', receivedAt: '', location: '', detail: '',
+    })
+    const [submitting, setSubmitting] = React.useState(false)
+    const [result, setResult] = React.useState(null)
+
+    function handleChange(key) {
+      return (e) => setFields((prev) => ({ ...prev, [key]: e.target.value }))
+    }
+
+    async function handleSubmit(e) {
+      e.preventDefault()
+      setSubmitting(true)
+      const res = await fetch('/api/cases', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(fields),
+      })
+      const data = await res.json()
+      setResult(data)
+      setSubmitting(false)
+    }
+
+    function field(key, labelText, id, multiline) {
+      return h('div', null,
+        h('label', { htmlFor: id }, labelText),
+        multiline
+          ? h('textarea', { id, name: key, rows: 3, value: fields[key], onChange: handleChange(key) })
+          : h('input', { id, name: key, value: fields[key], onChange: handleChange(key) })
+      )
+    }
+
+    return h('div', { className: 'card' },
+      h('form', { id: 'case-form', onSubmit: handleSubmit },
+        field('name', '고객명', 'field-name'),
+        field('phone', '연락처', 'field-phone'),
+        field('code', '식별코드', 'field-code'),
+        field('receivedAt', '접수일시', 'field-received-at'),
+        field('location', '위치', 'field-location'),
+        field('detail', '상세내용', 'field-detail', true),
+        h('button', { type: 'submit', id: 'submit-case-btn', disabled: submitting }, '접수 카드 생성')
+      ),
+      result && h('div', { id: 'result' }, `접수 카드 생성 완료: ${result.caseId}`)
+    )
+  }
+
+  function App() {
+    return h(React.Fragment, null,
+      h('header', null, h('h1', null, '케이스 관리 (System B) — 접수 카드 생성')),
+      h('main', null, h(CaseForm))
+    )
+  }
+
+  ReactDOM.createRoot(document.getElementById('root')).render(h(App))
+</script>
+</body>
+</html>

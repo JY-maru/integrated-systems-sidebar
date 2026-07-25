@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<title>결과 로그 시트 (mock)</title>
+<style>
+  body { font-family: -apple-system, sans-serif; margin: 24px; background: #f7f7f5; color: #222; }
+  h1 { font-size: 18px; }
+  table { border-collapse: collapse; width: 100%; background: #fff; }
+  th, td { border: 1px solid #ddd; padding: 6px 10px; font-size: 13px; text-align: left; }
+  th { background: #eee; }
+  button { margin: 8px 0 16px; padding: 6px 14px; font-size: 13px; cursor: pointer; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="/vendor/react.production.min.js"></script>
+<script src="/vendor/react-dom.production.min.js"></script>
+<script>
+  const h = React.createElement
+
+  function App() {
+    const [rows, setRows] = React.useState([])
+
+    async function load() {
+      const res = await fetch('/api/log')
+      const data = await res.json()
+      setRows(data.rows)
+    }
+
+    React.useEffect(() => { load() }, [])
+
+    return h(React.Fragment, null,
+      h('h1', null, '결과 로그 시트 (mock — 쓰기 전용 로그)'),
+      h('p', null, '실제 운영에서는 외부 스프레드시트 API로 기록됩니다. 이 페이지는 동일 인터페이스(행 추가)를 흉내낸 로컬 mock입니다.'),
+      h('button', { onClick: load }, '새로고침'),
+      h('table', null,
+        h('thead', null, h('tr', null,
+          h('th', null, '시각'), h('th', null, '스텝'), h('th', null, '접수 카드 번호'), h('th', null, '상세')
+        )),
+        h('tbody', null,
+          rows.map((r, i) => h('tr', { key: i },
+            h('td', null, r.time), h('td', null, r.step || ''),
+            h('td', null, r.caseId || ''), h('td', null, r.detail || '')
+          ))
+        )
+      )
+    )
+  }
+
+  ReactDOM.createRoot(document.getElementById('root')).render(h(App))
+</script>
+</body>
+</html>

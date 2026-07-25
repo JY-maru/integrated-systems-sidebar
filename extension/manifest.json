@@ -1,0 +1,56 @@
+{
+  "manifest_version": 3,
+  "name": "SPOG Demo — 사고접수 자동화 파이프라인",
+  "version": "0.1.0",
+  "description": "4개의 서로 연동되지 않는 사내 시스템(포털/케이스 관리/예약·배차 관리/고객 응대)을 하나의 사이드바로 이어붙여 접수양식 → 접수 카드 생성 → 예약·배차 자동화 → 고객 응대 반영 → 로그 기록을 자동화하는 포트폴리오 데모.",
+  "permissions": ["tabs", "scripting", "storage"],
+  "host_permissions": [
+    "http://localhost:8081/*",
+    "http://localhost:8082/*",
+    "http://localhost:8083/*",
+    "http://localhost:8084/*",
+    "http://localhost:8085/*",
+    "http://localhost:8086/*"
+  ],
+  "background": {
+    "service_worker": "background/service_worker.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://localhost:8081/*"],
+      "js": [
+        "js/config.js",
+        "js/state_manager.js",
+        "js/text_parser.js",
+        "js/dom_parser.js",
+        "js/candidate_search.js",
+        "js/message_router.js",
+        "js/ui_controller.js",
+        "js/content_a.js"
+      ],
+      "css": ["styles/sidebar.css"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["http://localhost:8082/*"],
+      "js": ["js/config.js", "js/content_b.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["http://localhost:8083/*"],
+      "js": ["js/config.js", "js/dom_parser.js", "js/candidate_search.js", "js/content_c.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["http://localhost:8084/*"],
+      "js": ["js/config.js", "js/content_d.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["js/injected_b.js", "js/injected_c.js"],
+      "matches": ["http://localhost:8082/*", "http://localhost:8083/*"]
+    }
+  ]
+}
