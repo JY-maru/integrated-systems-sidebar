@@ -1,51 +1,48 @@
-'use strict'
-// 접수양식 원문 텍스트(비정형) → 구조화 필드 변환.
-// dom_parser.js와 같은 원칙: 줄 순서나 컬럼 위치를 하드코딩하지 않고
-// "라벨 텍스트"를 기준으로 동적 매핑한다. 상담원마다 라벨 표기가
-// 조금씩 달라도(고객명/이름, 연락처/전화번호 등) 깨지지 않게 alias를 둔다.
+// text_parser.js
+// [PSEUDOCODE] 비정형 접수양식 텍스트 → 구조화 필드 파싱. 상담원이 받아
+// 적은 그대로("- 라벨 : 값" 또는 "1) 라벨 : 값" 등 표기가 제각각인 텍스트)를
+// 그대로 붙여넣을 수 있도록, 라벨 "텍스트"를 기준으로 매핑하고 순서/공백에
+// 관대하게 파싱한다. System D(고객응대)의 상담이력 원문 파싱에도 재사용된다.
 
-const SPOG_TEXT_PARSER = (() => {
-  const LABEL_ALIASES = {
-    name: ['고객명', '이름', '성명'],
-    phone: ['연락처', '전화번호', '전화'],
-    code: ['식별코드', '코드'],
-    receivedAt: ['접수일시', '일시'],
-    location: ['위치', '장소'],
-    detail: ['상세내용', '내용'],
+// 이 라벨들이 전부 있어야 "접수양식"으로 인정한다(아니면 그냥 일반 메모 텍스트로
+// 보고 null 반환 — 잘못된 자동화 트리거를 막기 위한 최소 방어).
+const REQUIRED_LABELS = ['예약번호', '자산번호', '보험사', '신고자', '운전자', '사고시각', '사고장소'];
+
+function parseIntakeTemplate(rawText) {
+  if (!rawText || typeof rawText !== 'string') return null;
+  for (const label of REQUIRED_LABELS) {
+    if (!rawText.includes(label)) return null;
   }
 
-  function matchField(label) {
-    const trimmed = label.trim()
-    for (const [field, aliases] of Object.entries(LABEL_ALIASES)) {
-      if (aliases.some((alias) => trimmed === alias || trimmed.includes(alias))) {
-        return field
-      }
+  const fields = {};
+  rawText.split(/\r?\n/).forEach((line) => {
+    // "- 라벨 : 값" / "1) 라벨 : 값" / "라벨: 값" 등 다양한 표기를 한 정규식으로 흡수.
+    // 콜론(반각/전각 모두) 좌측을 라벨, 우측을 값으로 취급 — 순서가 뒤바뀌어도,
+    // 앞에 불릿/번호가 붙어도 안전하게 매칭된다.
+    const m = line.match(/^\s*(?:[-*]|\d+\))?\s*([가-힣A-Za-z0-9()/·\s]+?)\s*[:：]\s*(.*)$/);
+    if (m) {
+      const label = m[1].trim();
+      const value = m[2].trim();
+      if (label) fields[label] = value;
     }
-    return null
-  }
-
-  function parseIntakeText(raw) {
-    const result = { name: '', phone: '', code: '', receivedAt: '', location: '', detail: '' }
-    if (!raw) return result
-
-    const lines = raw.split(/\r?\n/)
-    for (const line of lines) {
-      const m = line.match(/^\s*([^:：]+)[:：]\s*(.*)$/)
-      if (!m) continue
-      const field = matchField(m[1])
-      if (!field) continue
-      result[field] = m[2].trim()
-    }
-    return result
-  }
-
-  function isComplete(fields) {
-    return Boolean(fields.name && fields.code)
-  }
-
-  return { parseIntakeText, isComplete }
-})()
-
-if (typeof globalThis !== 'undefined') {
-  globalThis.SPOG_TEXT_PARSER = SPOG_TEXT_PARSER
+  });
+  return fields;
 }
+
+// 라벨 딕셔너리 → 콘텐츠 스크립트가 쓰는 필드명으로 변환 (동의어 흡수 포함)
+const LABEL_ALIASES = {
+  예약번호: 'resId', 자산번호: 'resourceId', 보험사: 'insuranceCompany',
+  신고자: 'reporterName', '신고자 연락처': 'reporterPhone',
+  운전자: 'driverName', '운전자 연락처': 'driverPhone',
+  사고시각: 'accidentAt', 사고장소: 'location',
+};
+function normalizeFields(rawFields) {
+  const out = {};
+  for (const [label, value] of Object.entries(rawFields)) {
+    const key = LABEL_ALIASES[label] || label;
+    out[key] = value;
+  }
+  return out;
+}
+
+window.TextParser = { parseIntakeTemplate, normalizeFields };

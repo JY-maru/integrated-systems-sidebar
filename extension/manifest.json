@@ -24,6 +24,11 @@
         "js/text_parser.js",
         "js/dom_parser.js",
         "js/candidate_search.js",
+        "js/panels/inbound_panel.js",
+        "js/panels/case_panel.js",
+        "js/panels/dispatch_panel.js",
+        "js/panels/postcare_panel.js",
+        "js/panels/settings_panel.js",
         "js/message_router.js",
         "js/ui_controller.js",
         "js/content_a.js"
@@ -49,8 +54,8 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["js/injected_b.js", "js/injected_c.js"],
-      "matches": ["http://localhost:8082/*", "http://localhost:8083/*"]
+      "resources": ["js/injected_b.js", "js/injected_c.js", "js/injected_d.js"],
+      "matches": ["http://localhost:8082/*", "http://localhost:8083/*", "http://localhost:8084/*"]
     }
   ]
 }

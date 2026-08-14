@@ -382,6 +382,35 @@
   font-size: 11px;
   font-weight: 700;
   color: var(--text-sec);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* 쓰기(탭 방문+폼 제출)/읽기(API 응답 캡처) 구분 태그 — README §"쓰기/읽기 구분" 참고 */
+#spog-sidebar .kind-tag {
+  flex-shrink: 0;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+}
+
+#spog-sidebar .kind-tag.write {
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+#spog-sidebar .kind-tag.read {
+  background: rgba(245, 158, 11, 0.16);
+  color: var(--warn);
+}
+
+#spog-sidebar .status-dot-row .kind-tag {
+  margin-left: auto;
 }
 
 #spog-sidebar .card-body {

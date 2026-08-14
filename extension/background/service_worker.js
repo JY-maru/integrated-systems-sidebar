@@ -1,163 +1,219 @@
-'use strict'
-// 허브: 콘텐츠 스크립트 간 직접 통신이 불가능한 구조적 제약을 메우는
-// switch-case 디스패처. content script 쪽(message_router.js, 맵 기반)과
-// 의도적으로 다른 스타일을 유지한다 (README.md §3-3 참고 — 알려진 불일치).
+// service_worker.js
+// [PSEUDOCODE] MV3 백그라운드 허브 — 4개 시스템 탭 사이의 모든 메시지가
+// 이 서비스워커를 거쳐 중계된다. 서비스워커는 예고 없이 유휴 종료→재기동될
+// 수 있으므로, 재기동 후에도 필요한 상태(로그인 식별자 등)를 storage에서
+// 복원하는 로직과, 탭 오케스트레이션(없으면 열기, 있으면 재사용/복구) 로직이
+// 이 파일의 핵심이다.
 
-importScripts('../js/config.js')
+const URL_PATTERNS = Object.freeze({
+  PORTAL: 'http://localhost:8081/*',
+  CASE: 'http://localhost:8082/*',
+  DISPATCH: 'http://localhost:8083/*',
+  CUSTOMER: 'http://localhost:8084/*',
+});
+const SYSTEM_LABEL = { CASE: 'System B(케이스관리)', DISPATCH: 'System C(예약·배차)', CUSTOMER: 'System D(고객응대)' };
 
-// 허브 상태 — 여러 탭에 걸쳐 지속되어야 하는 "현재 진행 중인 업무" 상태.
-// MV3 서비스워커는 유휴 시 언제든 종료될 수 있으므로, 각 스텝이 끝날 때마다
-// 재broadcast하고 A가 REQUEST_STATE로 다시 물어 복구할 수 있게 한다.
-const hubState = { tracking: null }
+let _bgState = { currentLoginId: '' };
 
-function broadcastToA(type, payload) {
-  chrome.tabs.query({ url: SPOG_CONFIG.PATTERNS.A }, (tabs) => {
-    tabs.forEach((tab) => chrome.tabs.sendMessage(tab.id, { type, payload }))
-  })
+// ── 탭 전체 브로드캐스트 ──
+function broadcastToPortal(message) {
+  chrome.tabs.query({ url: URL_PATTERNS.PORTAL }, (tabs) => tabs.forEach((t) => chrome.tabs.sendMessage(t.id, message).catch(() => {})));
 }
 
-function updateTracking(part) {
-  hubState.tracking = { ...(hubState.tracking || {}), active: true, ...part }
-  broadcastToA(SPOG_CONFIG.MSG.WORK_STARTED, hubState.tracking)
+// ── 전산 페이지 만료/세션끊김을 사이드바에 팝업으로 알림 ──
+function notifyPageExpired(systemLabel, extraText) {
+  broadcastToPortal({ type: 'PAGE_EXPIRED', system: systemLabel, text: extraText || `${systemLabel} 페이지가 만료되었습니다. 재인증이 필요합니다.` });
+  console.error(`[SPoG:Background] ERR_PAGE_EXPIRED ${systemLabel} 탭 릴레이 실패`);
 }
 
-function logToSheet(entry) {
-  fetch(SPOG_CONFIG.SHEET_LOG_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(entry),
-  })
-    .then(() => broadcastToA(SPOG_CONFIG.MSG.LOG_APPENDED, entry))
-    .catch((err) => console.warn('[background] 로그 기록 실패', err))
+// ── 열려있는 탭에 명령 릴레이. 실패(주로 세션 만료로 콘텐츠 스크립트가 응답
+//    안 함) 시 탭을 새로고침해 재인증 화면을 띄우고 사이드바에 알린다. ──
+function relayOrRecover(tabId, message, systemLabel) {
+  chrome.tabs.sendMessage(tabId, message).catch(() => {
+    chrome.tabs.reload(tabId);
+    notifyPageExpired(systemLabel);
+  });
 }
 
-// find-or-create-tab 패턴 (README.md §5). 필요한 시스템의 탭이 열려
-// 있지 않으면 대신 열어준다. 4~5곳에서 거의 동일한 모양으로 재사용된다.
-// focus:true면 자동화 대상 탭을 화면 앞으로 가져와, 값이 순서대로 채워지는
-// 과정을 사용자가 직접 눈으로 볼 수 있게 한다 (B/C처럼 사용자가 버튼을 눌러
-// 직접 트리거한 자동화용). D로 가는 C→D 자동 연쇄처럼 사용자 개입 없이
-// 조용히 처리돼야 하는 경우는 focus:false로 백그라운드에서 수행한다.
-function runOnHost(pattern, entryUrl, message, focus) {
-  chrome.tabs.query({ url: pattern }, (tabs) => {
-    if (tabs.length > 0) {
-      if (focus) {
-        chrome.tabs.update(tabs[0].id, { active: true }, () => chrome.tabs.sendMessage(tabs[0].id, message))
+// 대상 시스템 탭에 명령을 릴레이하고, 탭이 아예 없으면 새로 열어서(find-or-create)
+// 보낸다 — REQ_* → DO_* 커맨드 맵 변환은 호출부가 넘겨준다.
+function makeRelay(urlPattern, systemLabel, cmdMap, { createIfMissing = false } = {}) {
+  return (message, sender, sendResponse) => {
+    chrome.tabs.query({ url: urlPattern }, (tabs) => {
+      const payload = { ...message, type: cmdMap[message.type] || message.type };
+      if (tabs.length > 0) {
+        relayOrRecover(tabs[0].id, payload, systemLabel);
+      } else if (createIfMissing) {
+        chrome.tabs.create({ url: urlPattern.replace('/*', ''), active: false }, (newTab) => {
+          chrome.tabs.onUpdated.addListener(function listener(tabId, info) {
+            if (tabId === newTab.id && info.status === 'complete') {
+              chrome.tabs.onUpdated.removeListener(listener);
+              setTimeout(() => chrome.tabs.sendMessage(newTab.id, payload).catch(() => {}), RPA_APP_CONFIG?.TIMEOUT?.TAB_CREATE_DELAY ?? 1500);
+            }
+          });
+        });
       } else {
-        chrome.tabs.sendMessage(tabs[0].id, message)
+        broadcastToPortal({ type: 'DISPATCH_ERROR', error: `${systemLabel} 탭이 열려있지 않습니다.` });
+        notifyPageExpired(systemLabel, `${systemLabel} 탭을 새로 열었습니다. 재인증 후 다시 시도해주세요.`);
+        chrome.tabs.create({ url: urlPattern.replace('/*', ''), active: false });
       }
-      return
-    }
-    chrome.tabs.create({ url: entryUrl, active: !!focus }, (newTab) => {
-      function onUpdated(tabId, info) {
-        if (tabId === newTab.id && info.status === 'complete') {
-          chrome.tabs.onUpdated.removeListener(onUpdated)
-          // 페이지 자체 초기화 스크립트가 붙을 시간을 살짝 기다렸다가 전송
-          setTimeout(() => chrome.tabs.sendMessage(newTab.id, message), SPOG_CONFIG.TAB_READY_DELAY_MS)
-        }
-      }
-      chrome.tabs.onUpdated.addListener(onUpdated)
-    })
-  })
+    });
+    sendResponse({ status: 'ok' });
+    return true;
+  };
 }
 
-// 자동화가 끝난 뒤 사이드바(System A)로 화면을 되돌려, 결과 반영과 다음
-// 버튼 클릭을 바로 이어갈 수 있게 한다.
-function focusA() {
-  chrome.tabs.query({ url: SPOG_CONFIG.PATTERNS.A }, (tabs) => {
-    if (tabs[0]) chrome.tabs.update(tabs[0].id, { active: true })
-  })
+// =========================================================================
+// 사이드바 중앙 폴링 — 버전/큐권한/공지사항을 백엔드에서 이 한 곳(서비스워커)
+// 에서만 가져와 CLIENT_CONFIG_UPDATED로 사이드바에 push한다. 각 콘텐츠 스크립트가
+// 제각각 폴링하면 중복 요청이 발생하므로 중앙 집중화했다.
+// =========================================================================
+function pollClientConfig() {
+  if (!_bgState.currentLoginId) return; // 로그인 정보 확보 전이면 스킵
+  const url = `${RPA_APP_CONFIG.URL.SIDEBAR_MGMT_WEBHOOK}?action=GET_CLIENT_CONFIG&loginId=${encodeURIComponent(_bgState.currentLoginId)}`;
+  fetch(url).then((r) => r.json()).then((data) => {
+    if (data?.status === 'success') broadcastToPortal({ type: 'CLIENT_CONFIG_UPDATED', config: data });
+    else console.error('[SPoG:Background] GET_CLIENT_CONFIG 응답 실패:', data);
+  }).catch((err) => console.error('[SPoG:Background] GET_CLIENT_CONFIG 요청 실패:', err));
 }
 
-chrome.runtime.onMessage.addListener((message, sender) => {
-  switch (message.type) {
-    case SPOG_CONFIG.MSG.RUN_CASE_CREATION:
-      updateTracking({ step: 'case_creating' })
-      runOnHost(SPOG_CONFIG.PATTERNS.B, SPOG_CONFIG.ENTRY_URLS.B, message, true)
-      break
+chrome.alarms.create(RPA_APP_CONFIG.SIDEBAR_SYNC.ALARM_NAME, { periodInMinutes: RPA_APP_CONFIG.SIDEBAR_SYNC.POLL_INTERVAL_MIN });
+chrome.alarms.onAlarm.addListener((alarm) => { if (alarm.name === RPA_APP_CONFIG.SIDEBAR_SYNC.ALARM_NAME) pollClientConfig(); });
 
-    case SPOG_CONFIG.MSG.CASE_CREATED:
-      updateTracking({ step: 'case_created', case: message.payload })
-      broadcastToA(SPOG_CONFIG.MSG.CASE_CREATED, message.payload)
-      logToSheet({
-        step: 'case_created',
-        caseId: message.payload.caseId,
-        detail: `${message.payload.name} / ${message.payload.code}`,
-      })
-      focusA()
-      break
+// [핵심] 서비스워커가 유휴 타임아웃 후 재기동됐을 때(같은 브라우저 세션 내에서는
+// 흔함) 메모리 변수(_bgState.currentLoginId)가 초기화되어 폴링이 계속 스킵되는
+// 문제 — storage에 남아있는 로그인ID로 즉시 복원 + 1회 재폴링한다.
+chrome.storage.local.get(['SPOG_LOGIN_ID'], (res) => {
+  if (res.SPOG_LOGIN_ID && !_bgState.currentLoginId) { _bgState.currentLoginId = res.SPOG_LOGIN_ID; pollClientConfig(); }
+});
 
-    case SPOG_CONFIG.MSG.RUN_BLOCK_CREATION:
-      updateTracking({ step: 'block_creating' })
-      runOnHost(SPOG_CONFIG.PATTERNS.C, SPOG_CONFIG.ENTRY_URLS.C, message, true)
-      break
+// [구분 필요] onStartup은 브라우저를 실제로 새로 켰을 때만 발생한다(서비스워커
+// 유휴 재기동과는 다른 이벤트). 이전 세션의 로그인 식별자가 영구 저장소에
+// 그대로 남아있으면, 포털 페이지를 열지도 않았는데 사이드바에 이전 사용자명이
+// 뜨는 문제가 생기므로 브라우저가 새로 켜졌을 땐 신원 정보를 지운다.
+chrome.runtime.onStartup.addListener(() => {
+  chrome.storage.local.remove(['SPOG_LOGIN_ID', 'SPOG_AGENT_NAME'], () => { _bgState.currentLoginId = ''; });
+});
 
-    case SPOG_CONFIG.MSG.BLOCK_CREATED:
-      updateTracking({ step: 'block_created', block: message.payload })
-      broadcastToA(SPOG_CONFIG.MSG.BLOCK_CREATED, message.payload)
-      logToSheet({
-        step: 'block_created',
-        caseId: hubState.tracking?.case?.caseId,
-        detail: message.payload.blockId,
-      })
-      focusA()
-      break
+// =========================================================================
+// 확장 업데이트 직후 이미 열려있던 시스템 탭 안내 — 콘텐츠 스크립트가 이미
+// 페이지에 주입되어 실행 중이라, 업데이트해도 그 탭들은 "예전 코드"로 계속
+// 돌아간다(페이지를 직접 새로고침해야만 새 코드로 교체됨). 강제 새로고침은
+// 상담 중인 화면을 날릴 위험이 있어 하지 않고, 대신 "아직 새로고침 안 된
+// 시스템" 안내 토스트만 띄운다. 각 탭이 실제로 새로고침되는 걸 감지할 때마다
+// 목록에서 빼고, 다 빠지면 토스트를 닫으라는 신호를 보낸다.
+// =========================================================================
+const PENDING_REFRESH_KEY = 'SPOG_PENDING_REFRESH_SYSTEMS';
+const REFRESH_TRACK_SYSTEMS = { CASE: SYSTEM_LABEL.CASE, DISPATCH: SYSTEM_LABEL.DISPATCH, CUSTOMER: SYSTEM_LABEL.CUSTOMER };
 
-    case SPOG_CONFIG.MSG.RUN_RESERVATION_CREATION:
-      updateTracking({ step: 'reservation_creating' })
-      runOnHost(SPOG_CONFIG.PATTERNS.C, SPOG_CONFIG.ENTRY_URLS.C, message, true)
-      break
+function _broadcastRefreshStatus(pendingKeys) {
+  broadcastToPortal({ type: 'PENDING_REFRESH_STATUS', pending: pendingKeys.map((k) => REFRESH_TRACK_SYSTEMS[k]).filter(Boolean) });
+}
 
-    case SPOG_CONFIG.MSG.RESERVATION_CREATED:
-      updateTracking({ step: 'reservation_created', reservation: message.payload })
-      broadcastToA(SPOG_CONFIG.MSG.RESERVATION_CREATED, message.payload)
-      logToSheet({
-        step: 'reservation_created',
-        caseId: hubState.tracking?.case?.caseId,
-        detail: message.payload.reservationId,
-      })
-      focusA()
-      // C → D 자동 연쇄: 사용자 개입 없이 고객 응대 메모에 예약정보를 반영시킨다.
-      // (D는 탭 전환 없이 백그라운드에서 조용히 처리 — 사이드바에 결과만 반영)
-      runOnHost(SPOG_CONFIG.PATTERNS.D, SPOG_CONFIG.ENTRY_URLS.D, {
-        type: SPOG_CONFIG.MSG.FILL_CUSTOMER_MEMO,
-        payload: message.payload,
-      }, false)
-      break
+chrome.runtime.onInstalled.addListener((details) => {
+  if (details.reason !== 'install' && details.reason !== 'update') return; // 크롬 자체 업데이트는 해당 없음
+  const checks = Object.entries({ CASE: URL_PATTERNS.CASE, DISPATCH: URL_PATTERNS.DISPATCH, CUSTOMER: URL_PATTERNS.CUSTOMER })
+    .map(([key, pattern]) => new Promise((resolve) => chrome.tabs.query({ url: pattern }, (tabs) => resolve(tabs.length > 0 ? key : null))));
+  Promise.all(checks).then((results) => {
+    const pending = results.filter(Boolean);
+    if (pending.length === 0) return;
+    chrome.storage.local.set({ [PENDING_REFRESH_KEY]: pending });
+    _broadcastRefreshStatus(pending);
+  });
+});
 
-    case SPOG_CONFIG.MSG.RUN_VEHICLE_SEARCH:
-      updateTracking({ step: 'vehicle_searching' })
-      runOnHost(SPOG_CONFIG.PATTERNS.C, SPOG_CONFIG.ENTRY_URLS.C, message, true)
-      break
+// onInstalled 시점에 push해도 그 순간 포털 탭 자신도 "예전 코드"라 새 메시지
+// 타입을 못 받는다 — 실제로 새로고침돼서 새 코드가 실행되면 이 요청으로 현재
+// pending 상태를 직접 pull한다.
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.type !== 'REQUEST_PENDING_REFRESH_STATUS') return false;
+  chrome.storage.local.get([PENDING_REFRESH_KEY], (res) => {
+    const pending = res[PENDING_REFRESH_KEY] || [];
+    if (pending.length > 0) _broadcastRefreshStatus(pending);
+    sendResponse({ status: 'ok' });
+  });
+  return true;
+});
 
-    case SPOG_CONFIG.MSG.VEHICLE_CANDIDATES_READY:
-      updateTracking({ step: 'vehicle_searched' })
-      broadcastToA(SPOG_CONFIG.MSG.VEHICLE_CANDIDATES_READY, message.payload)
-      logToSheet({
-        step: 'vehicle_searched',
-        caseId: hubState.tracking?.case?.caseId,
-        detail: `후보 ${message.payload.candidates.length}건`,
-      })
-      focusA()
-      break
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.status !== 'complete' || !tab.url) return;
+  chrome.storage.local.get([PENDING_REFRESH_KEY], (res) => {
+    const pending = res[PENDING_REFRESH_KEY] || [];
+    if (pending.length === 0) return;
+    const matchedKey = Object.entries({ CASE: URL_PATTERNS.CASE, DISPATCH: URL_PATTERNS.DISPATCH, CUSTOMER: URL_PATTERNS.CUSTOMER })
+      .find(([, pattern]) => tab.url.startsWith(pattern.replace('/*', '')))?.[0];
+    if (!matchedKey || !pending.includes(matchedKey)) return;
+    const next = pending.filter((k) => k !== matchedKey);
+    chrome.storage.local.set({ [PENDING_REFRESH_KEY]: next });
+    _broadcastRefreshStatus(next);
+  });
+});
 
-    case SPOG_CONFIG.MSG.CUSTOMER_MEMO_FILLED:
-      updateTracking({ step: 'customer_memo_filled', active: false })
-      broadcastToA(SPOG_CONFIG.MSG.CUSTOMER_MEMO_FILLED, message.payload)
-      logToSheet({
-        step: 'customer_memo_filled',
-        caseId: hubState.tracking?.case?.caseId,
-        detail: '고객 응대 메모 자동 반영 완료',
-      })
-      break
+// =========================================================================
+// 결과 로그 시트 기록 — 각 자동화 스텝 완료마다 쓰기 전용으로 기록(감사/추적용)
+// =========================================================================
+function sendLog(entry) {
+  fetch(RPA_APP_CONFIG.URL.RESULT_LOG_WEBHOOK, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(entry),
+  }).catch((err) => console.error('[SPoG:Background] 로그 기록 실패:', err));
+}
 
-    case SPOG_CONFIG.MSG.INBOUND_EVENT:
-      broadcastToA(SPOG_CONFIG.MSG.INBOUND_EVENT, message.payload)
-      break
+// =========================================================================
+// 명령 릴레이 등록
+// =========================================================================
+const _dispatchRelay = makeRelay(URL_PATTERNS.DISPATCH, SYSTEM_LABEL.DISPATCH, {
+  REQ_DISPATCH_RES_INFO: 'DO_DISPATCH_RES_INFO',
+  REQ_DISPATCH_BLOCK_INFO: 'DO_DISPATCH_BLOCK_INFO',
+  REQ_DISPATCH_EXECUTE: 'DO_DISPATCH_EXECUTE',
+  REQ_CANDIDATE_SEARCH_START: 'DO_CANDIDATE_SEARCH_START',
+  REQ_CANDIDATE_SEARCH_RESET: 'DO_CANDIDATE_SEARCH_RESET',
+  REQ_CANDIDATE_SEARCH_STOP: 'DO_CANDIDATE_SEARCH_STOP',
+  REQ_CANDIDATE_SEARCH_EXPAND: 'DO_CANDIDATE_SEARCH_EXPAND',
+  REQ_CREATE_RESERVATION_BLOCK: 'DO_CREATE_RESERVATION_BLOCK',
+});
+['REQ_DISPATCH_RES_INFO', 'REQ_DISPATCH_BLOCK_INFO', 'REQ_DISPATCH_EXECUTE',
+  'REQ_CANDIDATE_SEARCH_START', 'REQ_CANDIDATE_SEARCH_RESET', 'REQ_CANDIDATE_SEARCH_STOP', 'REQ_CANDIDATE_SEARCH_EXPAND',
+  'REQ_CREATE_RESERVATION_BLOCK'].forEach((type) => chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.type !== type) return false;
+  return _dispatchRelay(msg, sender, sendResponse);
+}));
 
-    case SPOG_CONFIG.MSG.REQUEST_STATE:
-      if (sender.tab) {
-        chrome.tabs.sendMessage(sender.tab.id, { type: SPOG_CONFIG.MSG.STATE_SNAPSHOT, payload: hubState })
-      }
-      break
+// 대상 시스템 → 사이드바 결과/진행상황 중계 (그대로 broadcast)
+['DISPATCH_RES_INFO', 'DISPATCH_BLOCK_INFO', 'DISPATCH_EXECUTE_RESULT',
+  'CANDIDATE_SEARCH_PROGRESS', 'CANDIDATE_SEARCH_RESULT', 'CANDIDATE_SEARCH_ERROR', 'RESERVATION_BLOCK_CREATED',
+].forEach((type) => chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.type !== type) return false;
+  broadcastToPortal(msg);
+  sendResponse({ status: 'ok' });
+  return true;
+}));
+
+// 자동 연쇄: 예약 생성이 끝나면 사용자 개입 없이 System D 탭을 방문해 응대
+// 메모에도 정보를 반영한다.
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.type !== 'DISPATCH_EXECUTE_RESULT' || !msg.success) return false;
+  chrome.tabs.query({ url: URL_PATTERNS.CUSTOMER }, (tabs) => {
+    if (tabs.length > 0) relayOrRecover(tabs[0].id, { type: 'DO_APPLY_RESERVATION_TO_MEMO', ...msg }, SYSTEM_LABEL.CUSTOMER);
+  });
+  sendLog({ step: 'dispatch_execute', ...msg, at: new Date().toISOString() });
+  return false;
+});
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.type === 'INTERCEPTED_AGENT_INFO') {
+    _bgState.currentLoginId = msg.loginId;
+    chrome.storage.local.set({ SPOG_LOGIN_ID: msg.loginId, SPOG_AGENT_NAME: msg.managerName });
+    pollClientConfig(); // 로그인 직후 첫 데이터는 알람을 기다리지 않고 즉시 확보
+    return false;
   }
-})
+  if (msg.type === 'INTERCEPTED_CASE') {
+    broadcastToPortal(msg);
+    sendLog({ step: 'case_created', caseId: msg.caseId, at: new Date().toISOString() });
+    return false;
+  }
+  if (msg.type === 'INBOUND_CALLBACK_ARRIVED' || msg.type === 'INBOUND_CALLBACK_COUNT_UPDATE' || msg.type === 'SEND_CASE_TO_PORTAL') {
+    broadcastToPortal(msg);
+    return false;
+  }
+  return false;
+});

@@ -2,8 +2,5 @@
   "name": "spog-demo",
   "version": "0.1.0",
   "private": true,
-  "description": "서로 연동되지 않는 4개 사내 시스템을 크롬 확장으로 이어붙이는 반복업무 자동화 포트폴리오 데모",
-  "scripts": {
-    "dev": "node mock-sites/server.js"
-  }
+  "description": "서로 연동되지 않는 4개 사내 시스템을 크롬 확장으로 이어붙이는 반복업무 자동화 포트폴리오 데모"
 }
