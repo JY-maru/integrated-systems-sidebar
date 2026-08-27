@@ -142,6 +142,13 @@
 > 기술적으로 더 깊이 들여다보고 싶은 분들을 위한 내용입니다 — 위 내용만으로도 프로젝트를
 > 이해하는 데는 충분합니다.
 
+레이어를 한눈에 보면 이렇습니다 — 사용자 입력이 아래로 내려가 자동화가 실행되고, 결과가 다시
+위로 올라와 화면을 자동 갱신합니다.
+
+![레이어 구조 — Presentation·State·Contract·Transport·Automation·Backend](./docs/architecture.png)
+
+더 아래 구조(파일 단위 모듈, 메시지 버스, 탭 오케스트레이션)는 다음 다이어그램과 코드로 이어집니다.
+
 ```mermaid
 flowchart TB
     subgraph HostA["System A 탭 (포털 · 사이드바 UI)"]
