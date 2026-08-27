@@ -64,18 +64,79 @@ function makeRelay(urlPattern, systemLabel, cmdMap, { createIfMissing = false } 
 }
 
 // =========================================================================
+// 백엔드 웹훅 fetch + 재시도 — 백엔드가 부하(동시실행 제한/콜드스타트)를
+// 받으면 JSON 대신 HTML 에러 페이지를 돌려줄 때가 있다(res.json()이 예외를
+// 던짐). 네트워크 실패든 파싱 실패든 동일하게 짧은 재시도로 흡수한다. 재시도는
+// 멱등성이 확인된 호출(조회 전부, mock_sidebar_webhook.js의 쓰기 3종)에만 쓴다.
+// =========================================================================
+function fetchWebhookJson(url, options, retries = 2, delayMs = 500) {
+  return fetch(url, options).then((r) => r.json()).catch((err) => {
+    if (retries <= 0) throw err;
+    return new Promise((resolve) => setTimeout(resolve, delayMs)).then(() => fetchWebhookJson(url, options, retries - 1, delayMs * 2));
+  });
+}
+
+// =========================================================================
 // 사이드바 중앙 폴링 — 버전/큐권한/공지사항을 백엔드에서 이 한 곳(서비스워커)
 // 에서만 가져와 CLIENT_CONFIG_UPDATED로 사이드바에 push한다. 각 콘텐츠 스크립트가
 // 제각각 폴링하면 중복 요청이 발생하므로 중앙 집중화했다.
+//
+// [핵심] _configWriteGeneration — 게시판 쓰기(고정/읽음/재정렬)가 시작될 때마다
+// 증가한다. 그 시점 이전에 이미 나가있던 폴링 요청이 나중에 응답을 받아도 낡은
+// 세대로 판정해 버린다 — 쓰기 POST와 폴링 GET이 같은 백엔드를 향해 순서 보장
+// 없이 경쟁하며 화면이 잠깐 되돌아가던 문제(bulletin_store.ts 헤더 주석 참고)의
+// 근본 차단. 클라이언트측 타이밍 추측(톰스톤) 대신 이 한 곳에서 원천 차단한다.
 // =========================================================================
+let _configWriteGeneration = 0;
+
 function pollClientConfig() {
   if (!_bgState.currentLoginId) return; // 로그인 정보 확보 전이면 스킵
   const url = `${RPA_APP_CONFIG.URL.SIDEBAR_MGMT_WEBHOOK}?action=GET_CLIENT_CONFIG&loginId=${encodeURIComponent(_bgState.currentLoginId)}`;
-  fetch(url).then((r) => r.json()).then((data) => {
+  const genAtRequest = _configWriteGeneration;
+  fetchWebhookJson(url).then((data) => {
+    if (genAtRequest !== _configWriteGeneration) {
+      console.log('[SPoG:Background] 게시판 쓰기 발생 후 도착한 stale 폴링 응답 폐기');
+      return;
+    }
     if (data?.status === 'success') broadcastToPortal({ type: 'CLIENT_CONFIG_UPDATED', config: data });
     else console.error('[SPoG:Background] GET_CLIENT_CONFIG 응답 실패:', data);
   }).catch((err) => console.error('[SPoG:Background] GET_CLIENT_CONFIG 요청 실패:', err));
 }
+
+// ── 게시판 고정/읽음/재정렬 쓰기 — 사이드바 직접 fetch 대신 여기를 거치게
+//    해서 _configWriteGeneration을 올려 폴링과의 경쟁을 차단하고, 성공 직후
+//    바로 재폴링해 5분 알람까지 기다리지 않고 빠르게 동기화한다. ──
+function _handleBulletinWrite(action, extraFields) {
+  return (msg, sender, sendResponse) => {
+    if (msg.type !== action) return false;
+    _configWriteGeneration += 1;
+    const url = `${RPA_APP_CONFIG.URL.SIDEBAR_MGMT_WEBHOOK}?action=${action}`;
+    fetchWebhookJson(url, { method: 'POST', body: JSON.stringify({ loginId: _bgState.currentLoginId, ...extraFields(msg) }) })
+      .then((data) => {
+        if (data?.status === 'success') { sendResponse({ success: true }); pollClientConfig(); }
+        else sendResponse({ success: false, error: data?.message || '백엔드 응답 실패' });
+      })
+      .catch((err) => sendResponse({ success: false, error: err.toString() }));
+    return true;
+  };
+}
+chrome.runtime.onMessage.addListener(_handleBulletinWrite('TOGGLE_BULLETIN_PIN', (m) => ({ bulletinId: m.bulletinId, pinned: m.pinned, pinnedOrder: m.pinnedOrder })));
+chrome.runtime.onMessage.addListener(_handleBulletinWrite('TOGGLE_BULLETIN_READ', (m) => ({ bulletinId: m.bulletinId, read: m.read })));
+chrome.runtime.onMessage.addListener(_handleBulletinWrite('REORDER_BULLETIN_PINS', (m) => ({ orderedIds: m.orderedIds })));
+
+// ── 게시판 본문 온디맨드 조회 — 순수 조회라 세대 카운터/쓰기 경쟁과 무관,
+//    재시도해도 항상 안전 ──
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.type !== 'GET_BULLETIN_DETAIL') return false;
+  const url = `${RPA_APP_CONFIG.URL.SIDEBAR_MGMT_WEBHOOK}?action=GET_BULLETIN_DETAIL&bulletinId=${encodeURIComponent(msg.bulletinId)}`;
+  fetchWebhookJson(url)
+    .then((data) => {
+      if (data?.status === 'success') sendResponse({ success: true, content: data.content });
+      else sendResponse({ success: false, error: data?.message || '백엔드 응답 실패' });
+    })
+    .catch((err) => sendResponse({ success: false, error: err.toString() }));
+  return true;
+});
 
 chrome.alarms.create(RPA_APP_CONFIG.SIDEBAR_SYNC.ALARM_NAME, { periodInMinutes: RPA_APP_CONFIG.SIDEBAR_SYNC.POLL_INTERVAL_MIN });
 chrome.alarms.onAlarm.addListener((alarm) => { if (alarm.name === RPA_APP_CONFIG.SIDEBAR_SYNC.ALARM_NAME) pollClientConfig(); });

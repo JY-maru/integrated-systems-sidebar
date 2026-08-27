@@ -1,8 +1,14 @@
 // ui_controller.js
 // [PSEUDOCODE] System A 사이드바 코어 — 패널 전환(강제 인터럽트 vs 앰비언트
 // 뱃지), 상태바/토스트, 보안 타이머, MV3 서비스워커 재시작 복구를 담당한다.
-// 패널별 세부 렌더링/상태는 js/panels/*.js로 위임하고, 여기서는 "언제/왜
-// 어느 패널로 전환하는가"라는 오케스트레이션 로직만 다룬다.
+// 패널 "내용"은 이 파일이 그리지 않는다 — js/panels/*.tsx(React 컴포넌트)를
+// 마운트만 하고, 실제 원본에서도 이 파일은 React로 이전되지 않은 순수 JS
+// 셸이다: 테마/프로필/보안타이머 같은 셸 전역 관심사를 여전히 이 파일이
+// 직접 처리하고, window.StateManager(레거시 파사드)도 계속 무수정으로 호출한다.
+// 패널 쪽 React 컴포넌트가 셸 기능이 필요할 때 되불러 쓰도록 updateStatus/
+// showToast/switchPanel 같은 걸 window.UiController로 공개 API처럼 노출한다 —
+// 이 파일은 처음부터 끝까지 한 번에 새로 짜인 게 아니라, 패널을 하나씩
+// React로 옮겨가는 점진적 마이그레이션 동안 계속 남아있는 레거시 셸이다.
 
 let _securityTimer = null;
 
@@ -51,7 +57,7 @@ const PANEL_IDS = ['panel-inbound', 'panel-case', 'panel-dispatch', 'panel-postc
 
 function switchPanel(panelId, { forced = false } = {}) {
   if (!PANEL_IDS.includes(panelId)) return;
-  Panels.setActivePanel(panelId); // React 트리 쪽 상태 갱신 — 실제 DOM 스위칭은 각 패널 컴포넌트가 담당
+  Panels.setActivePanel(panelId); // React 셸 컴포넌트(Shell)의 state를 갱신 — 실제 DOM 스위칭은 React가 담당
   if (forced) Panels.flashNavItem(panelId); // 강제 전환임을 시각적으로 강조
 }
 
@@ -90,6 +96,10 @@ function _applyTheme() {
 
 function init() {
   _applyTheme();
+  // Panels.mount는 panels 번들(js/panels/*.tsx 묶음)이 노출하는 진입점 —
+  // 내부적으로 ReactDOM.createRoot(container).render(<Shell />)를 호출한다.
+  // 이 파일은 그 React 루트가 어디에 박히는지만 알고, 안쪽 렌더링에는
+  // 관여하지 않는다.
   Panels.mount(document.getElementById('spog-sidebar-root'));
   switchPanel('panel-case'); // 기본 활성 패널
   updateStatus('대기 중', 'info');
