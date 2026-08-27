@@ -1,0 +1,260 @@
+# 아키텍처 상세
+
+> [README.md](../README.md)의 요약을 읽고 오면 이해하기 쉽습니다. 아래는 실제
+> `extension/` 소스(파일명·메시지 타입·함수명)를 기준으로 설명합니다.
+
+## 핵심 설계 아이디어
+
+1. **각 화면의 자동화 코드는 서로의 존재를 모릅니다.** "이런 일이 생겼다"고 백그라운드
+   허브에 알릴 뿐, 어느 화면에 어떻게 전달할지는 허브가 정합니다 — 시스템 하나가
+   추가·변경돼도 다른 시스템 코드를 안 건드려도 됩니다.
+2. **사이드바가 있는 화면은 역할별로 잘게 나눴습니다.** 코드량이 가장 많은 곳이라
+   상태·텍스트 인식·메시지 처리·화면 그리기를 파일 단위로 분리했습니다.
+
+## 1. 계층별 기술 스택
+
+| 레이어 | 파일 | 스택 | 이유 |
+|---|---|---|---|
+| 제3자 페이지 자동화 | `content_b/c/d.js`, `service_worker.js` | 순수 JavaScript | 대상 페이지 안에 주입되는 코드라 프레임워크를 못 씀 |
+| 사이드바 UI | `panels/*.tsx` | React 19 + TypeScript | 패널별 로컬 상태·리렌더링 관리 |
+| 공유 상태 | `state/store.ts` | Zustand 5 | 여러 패널이 구독하는 전역 상태, `subscribe()` 지원 |
+| 추적 상태 | `state/tracking_store.ts` | Zustand 5 | 폴링(스캔)으로만 확인 가능한 외부 데이터를 톰스톤+스코프 한정 병합으로 깜빡임 없이 추적 |
+| 게시판 상태 | `state/bulletin_store.ts` | Zustand 5 | 낙관적 업데이트 + 실패 시 롤백, 본문 온디맨드 조회 |
+| 레거시 호환 파사드 | `state/legacy_adapter.ts` | TypeScript | 기존 호출부가 옛 `window.StateManager.get/set` API를 그대로 쓸 수 있게 함 |
+| 메시지 검증 | `message_router.ts` | TypeScript + zod | 메시지 타입별 스키마 검증 + 3단계 오리진 검증(self/embed-sandbox/trusted-list) |
+| 백엔드(경량) | `backend/mock_sidebar_webhook.js` | 순수 JavaScript | 스프레드시트+스크립트 런타임(Apps Script류) 흉내 — 목록/본문 이중 캐시, 멱등 쓰기 핸들러 |
+
+## 2. 모듈 구조 (System A 탭 기준)
+
+순수 JS 콘텐츠 스크립트 셸 위에 패널을 하나씩 React + TypeScript + Zustand로 옮겨가는
+점진적 마이그레이션 구조를 그대로 반영했습니다.
+
+| 계층 | 파일 | 스택 | 책임 |
+|---|---|---|---|
+| Config | `config.js` | JS | 도메인 상수, 메시지 타입, 타임아웃 값을 `Object.freeze`로 동결해 `globalThis`에 등록 |
+| State (store) | `state/store.ts` | TS + Zustand | `createStore`로 만든 공유 상태 스토어 |
+| State (호환 파사드) | `state/legacy_adapter.ts` | TS | 구버전 API를 재현해 기존 호출부를 안 건드림 |
+| State (배선) | `state/index.ts` | TS | `window.StateManager`/`window.ResourceStore` 전역 등록 |
+| State (훅) | `state/hooks.ts` | TS + React | `useSharedStore` — 패널이 공유 스토어를 구독하는 훅 |
+| Parsers | `text_parser.js` | JS | 비정형 접수양식 텍스트를 라벨 매칭으로 구조화 필드로 변환 |
+| Parsers | `dom_parser.js` | JS | 다른 시스템의 HTML 표를 헤더 텍스트로 동적 매핑 |
+| Domain engine | `candidate_search.js` | JS | 거리 계산·후보 필터링·스코어링만 담당하는 순수 함수(DOM 비의존) |
+| Bridge / Bus | `message_router.ts` | TS + zod | 타입드 메시지 레지스트리 — 스키마·오리진·타임아웃 가드를 한 곳에서 담당 |
+| Panels | `js/panels/*.tsx` (6개) | TS + React + Zustand | 패널별 컴포넌트 + 전용 로컬 스토어 |
+| UI 셸 | `ui_controller.js` | JS | 인터럽트 vs 앰비언트 판단, MV3 재시작 복구 — React로 안 옮겨진 레거시 코어 |
+| Entry point | `content_a.js` | JS | `MessageRouter.init()` → `UiController.init()` 순서로 초기화만 수행 |
+
+```
+config → state/store → state/legacy_adapter → state/index
+       → text_parser → dom_parser → candidate_search
+       → message_router → ui_controller → panels/*(React 마운트)
+       → content_a(init 호출)
+```
+
+Manifest V3 서비스워커는 파일 하나만 등록할 수 있어, `background/service_worker.js`는 `importScripts('../js/config.js')`로 config 모듈만 별도로 끌어와 상수를 공유합니다.
+
+## 3. 메시지 버스: 3단 구조
+
+브라우저 확장의 격리된 실행 컨텍스트 제약 때문에 통신 계층이 3단으로 나뉩니다.
+
+```mermaid
+sequenceDiagram
+    participant Page as System B 페이지 자신의 fetch
+    participant Inject as injected_b.js (page context)
+    participant Content as content_b.js (격리 world)
+    participant BG as service_worker.js (허브)
+    participant Router as message_router.ts (System A)
+    participant Iframe as 임베드 폼(iframe)
+
+    Page->>Inject: POST /api/cases 응답
+    Inject-->>Content: window.postMessage(INTERCEPTED_DETAIL)
+    Content->>BG: chrome.runtime.sendMessage(CASE_CREATED)
+    BG->>Router: chrome.tabs.sendMessage(System A 탭)
+    Note over BG,Router: 여기서 System A 탭도 chrome.tabs.update로<br/>다시 전면에 포커스된다 (focusA)
+    Router->>Router: state 반영 + 케이스 패널 강제 전환
+```
+
+**3-1. 페이지 컨텍스트 ↔ 콘텐츠 스크립트** — 콘텐츠 스크립트는 격리된 월드(isolated world)에서 실행되어 페이지의 `window.fetch`에 접근할 수 없습니다. `<script src="...">`로 페이지 컨텍스트(MAIN world)에 스크립트를 주입해 `fetch` 응답을 가로채고, `window.postMessage`로 되돌려줍니다.
+
+```js
+// injected_b.js — 페이지 컨텍스트(MAIN world)에서 실행
+const originalFetch = window.fetch
+window.fetch = async (...args) => {
+  const response = await originalFetch(...args)
+  const url = typeof args[0] === 'string' ? args[0] : args[0]?.url
+  if (url?.includes('/api/case/detail') && response.ok) {
+    const payload = await response.clone().json()
+    window.postMessage({ type: 'INTERCEPTED_CASE', payload: extractCaseFields(payload), __spogToken: RPA_MSG_TOKEN }, '*')
+  }
+  return response
+}
+```
+
+**3-2. 콘텐츠 스크립트 ↔ 임베드 iframe** — System A 페이지엔 접수양식 폼이 iframe으로 임베드돼 있습니다. 별도 요청 ID 체계 없이 **"kind로 매칭 + 타임아웃 시 null 반환"**하는 Promise 래퍼로 요청/응답을 짝짓습니다(동시 1건 대기 전제 — §9 참고). iframe은 별도 샌드박스 도메인이라 `validatePostOrigin(event, 'embed-sandbox')`로 오리진을 검증한 뒤에만 신뢰합니다.
+
+```js
+// message_router.ts
+function getEmbedFormData(kind) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => { cleanup(); resolve(null) }, RPA_APP_CONFIG.TIMEOUT.ELEMENT_DEFAULT)
+    function onMessage(event) {
+      if (!validatePostOrigin(event, 'embed-sandbox')) return
+      const msg = event.data
+      if (msg?.type === 'RESPONSE_DATA' && msg.kind === kind) {
+        clearTimeout(timer); cleanup(); resolve(msg.payload)
+      }
+    }
+    function cleanup() { window.removeEventListener('message', onMessage) }
+    window.addEventListener('message', onMessage)
+    embedFrameWindow.postMessage({ type: 'REQUEST_DATA', kind }, '*')
+  })
+}
+```
+
+**3-3. 콘텐츠 스크립트 ↔ 백그라운드 ↔ 다른 탭 — 허브 앤 스포크** — 서로 다른 탭의 콘텐츠 스크립트는 직접 통신할 수 없어, 백그라운드 서비스워커가 허브 역할을 합니다.
+
+```js
+// background/service_worker.js — 타입별로 개별 리스너를 등록하는 방식
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.type !== 'INTERCEPTED_CASE') return false
+  broadcastToPortal(msg) // System A 탭 전체에 push
+  sendLog({ step: 'case_created', caseId: msg.caseId, at: new Date().toISOString() })
+  return false
+})
+```
+
+수신 측(`message_router.ts`)은 타입드 레지스트리로 분배 — 새 이벤트는 등록 한 줄만 추가하면 됩니다.
+
+```js
+// message_router.ts
+registerRuntimeHandler('INTERCEPTED_CASE', (m) => !!m.caseId, handleInterceptedCase)
+```
+
+> `service_worker.js`는 타입별 개별 `addListener` 방식이고 `message_router.ts`는 스키마+오리진+타임아웃 가드를 갖춘 레지스트리입니다 — 두 계층의 분배 스타일이 다른 점은 개선 여지가 있습니다(§9).
+
+## 4. 상태 관리: 2단 상태 설계
+
+- **탭 로컬 상태** (`state/store.ts`) — 새로고침하면 사라지는 휘발성 상태.
+- **허브 상태** (`service_worker.js`의 `hubState`) — 여러 탭에 걸쳐 지속돼야 하는 진행 상태. MV3 서비스워커는 유휴 시 언제든 종료(cold start)될 수 있어, 각 스텝이 끝날 때마다 재broadcast하고 System A는 로드 시 `REQUEST_STATE`로 다시 물어 복구합니다.
+
+```ts
+// state/legacy_adapter.ts — 화이트리스트 가드가 있는 구버전 호환 파사드
+export const legacyStateManager = {
+  get(key: string) { _guard(key); return sharedStore.getState()[key as StateKey] },
+  set(key: string, value: unknown) { _guard(key); sharedStore.setState({ [key]: value }) },
+  update(key: string, partial: object) { /* 객체 상태만 부분 병합 — 배열/원시값이면 경고 후 무시 */ },
+}
+```
+
+## 5. 탭 라이프사이클 오케스트레이션
+
+백그라운드는 필요한 탭이 없으면 대신 열어주는 오케스트레이터이기도 합니다. 대상 탭을 **전면으로 가져와** 처리 과정을 보여주고, 완료되면 원래 탭으로 자동 복귀합니다.
+
+```js
+// background/service_worker.js — find-or-create-tab 패턴
+function runOnHost(pattern, entryUrl, message, focus) {
+  chrome.tabs.query({ url: pattern }, (tabs) => {
+    if (tabs.length > 0) {
+      if (focus) chrome.tabs.update(tabs[0].id, { active: true }, () => chrome.tabs.sendMessage(tabs[0].id, message))
+      else chrome.tabs.sendMessage(tabs[0].id, message)
+      return
+    }
+    chrome.tabs.create({ url: entryUrl, active: !!focus }, (newTab) => {
+      // 탭 로드 완료 후 초기화 스크립트가 붙을 시간을 살짝 기다렸다가 메시지 전송
+    })
+  })
+}
+```
+
+## 6. 사이드바 UI 인디케이터
+
+1. **뱃지(badge)** — 비활성 패널에 처리 대기 건수를 숫자로 표시.
+2. **트래킹 닷(track-dot)** — 열려 있지 않은 패널에 영향을 주는 이벤트가 오면 점으로 표시.
+3. **쓰기/읽기 태그(kind-tag)** — `✍️ 쓰기` / `📡 읽기`로 구분.
+
+**인터럽트 기반 자동 전환**: 핵심 이벤트(접수 카드 생성)는 강제로 패널을 전환하고, 부차적 이벤트(인바운드 콜백)는 뱃지만 올립니다.
+
+```js
+// ui_controller.js
+function onCaseConnected() {
+  switchPanel('panel-case', { forced: true })
+}
+function onInboundCountUpdated(count) {
+  Panels.inboundActions.setBadgeCount(count)
+}
+```
+
+## 7. 엔드투엔드 예시: 접수 카드 생성
+
+```mermaid
+sequenceDiagram
+    participant User as 사용자
+    participant A as content_a.js
+    participant Iframe as 임베드 폼
+    participant BG as service_worker.js
+    participant B as content_b.js
+    participant PageB as System B 페이지(fetch)
+
+    User->>A: "접수 카드 생성" 클릭
+    A->>Iframe: requestIframeData('intake_text')
+    Iframe-->>A: 현재 입력값(원문 텍스트)
+    alt 값이 비어 있음
+        A->>User: alert — 처리 중단
+    else 값 있음
+        A->>A: text_parser로 필드 파싱
+        A->>BG: RUN_CASE_CREATION { fields }
+        BG->>B: chrome.tabs.update(active:true) + sendMessage
+        Note over B: System B 탭이 화면 전면으로 전환됨
+        B->>B: 필드 6개를 하나씩 채우고(RPA_FIELD_DELAY_MS)<br/>제출 버튼 클릭
+        B->>PageB: 제출 → POST /api/cases
+        PageB-->>B: injected_b.js가 응답 가로채 전달
+        B->>BG: CASE_CREATED { caseId, ... }
+        BG->>BG: hubState 갱신 + 결과 로그 시트에 기록
+        BG->>A: broadcast(CASE_CREATED) + focusA()
+        Note over A: System A 탭으로 자동 복귀
+        A->>A: 케이스 패널 강제 전환 + 상세 렌더링
+    end
+```
+
+"값이 비어 있으면 중단"은 시스템 간 공유 트랜잭션이 없기 때문에, 확장 스스로 정합성을 검증하고 불일치 시 자동화를 중단시키는 방어 로직입니다.
+
+## 8. 설계 결정과 트레이드오프
+
+| 결정 | 이유 |
+|---|---|
+| 콘텐츠 스크립트 간 직접 통신 금지, 백그라운드 허브 강제 | 탭 간 결합도를 낮춰 "System C 어댑터가 System B의 존재를 몰라도 되게" 만듦 |
+| `Object.freeze`로 동결된 단일 config 모듈 + `globalThis` 공유 | 서비스워커/콘텐츠 스크립트 양쪽에서 같은 상수를 참조, 중복 방지 |
+| 상관관계 ID 없는 Promise+타임아웃 기반 iframe 요청 | 동시 1건 대기 전제하에 충분히 안전하고, 요청-ID 체계보다 단순 |
+| 상태 스토어의 화이트리스트 가드 | TS 없이도 오타로 인한 "조용한 실패"를 콘솔 경고로 드러냄 |
+| 백그라운드가 진행 상태를 재broadcast | MV3 서비스워커 재시작을 전제로, UI가 "다시 물어서" 복구 |
+| 순수 도메인 로직을 DOM 파서와 분리 | 거리/스코어링 로직이 DOM 없이도 테스트 가능해야 한다는 원칙 |
+| `runOnHost`를 항상 `focus:true`로 호출 | 자동 연쇄까지도 탭 전환으로 보여주는 게 시스템 통합을 드러내는 데 중요 |
+| 후보 검색: 잠금 대신 세대(generation) 카운터 | 응답 대기 중 다음 요청이 가면 이전 응답은 이미 쓸모없어짐 — 잠그는 대신 세대 번호로 오래된 응답을 가려냄 |
+| 게시판 쓰기를 허브 경유 강제 + 쓰기 세대 카운터 | 직접 쓰기 구조에선 배경 폴링과의 순서 보장이 불가능 — 쓰기 시작마다 세대 번호를 올려 그 이전 폴링 응답을 무효화 |
+| 추적 목록은 "스코프 한정 병합"으로 갱신 | 서로 다른 스캔 결과가 상대의 발견을 지워버리지 않도록, 실제로 훑은 범위 밖은 건드리지 않음 |
+
+## 9. 알려진 한계
+
+- **디스패치 스타일이 계층별로 다름** — `service_worker.js`는 타입별 개별 리스너, `message_router.ts`는 타입드 registry.
+- **모듈 로딩이 전역 네임스페이스 기반** — `window.SPOG_*`/`window.Panels`, 로드 순서를 `manifest.json` 배열에 의존.
+- **`Panels` 네임스페이스가 암묵적으로 합성됨** — 로드 순서가 깨지면 특정 액션이 조용히 `undefined`.
+- **자동화 테스트 부재** — 순수 함수로 분리된 부분(`candidate_search.js` 등)부터 붙이기 좋음.
+- **요청-ID 없는 iframe 브리지** — 동시 다발 요청이 필요해지면 상관관계 ID 추가 필요.
+
+## 데모 시나리오
+
+1. 사이드바가 System A(포털)에 자동 주입되고 "케이스 처리" 패널이 기본 활성화됩니다.
+2. 임베드된 폼에 접수양식 텍스트를 붙여넣습니다.
+   ```
+   고객명: 홍길동
+   연락처: 010-1234-5678
+   식별코드: AB-1234
+   접수일시: 2026-07-25 14:30
+   위치: 서울시 강남구
+   상세내용: 일반 문의 접수
+   ```
+3. "접수 카드 생성"(✍️ 쓰기) 클릭 → System B 탭으로 전환되며 폼 필드가 순서대로 채워지고 제출됩니다. 완료되면 사이드바로 자동 복귀하고 접수 카드 번호가 표시됩니다.
+4. "예약/배차 자동화" 패널에서 "블록 생성"(✍️ 쓰기) → "후보 검색"(📡 읽기) 클릭 → System C 탭으로 전환되어 값이 채워지거나 결과가 조회되고, 끝나면 사이드바로 복귀합니다. 방금 생성한 블록은 현황 표에 새 행으로 추가돼 잠깐 강조됩니다. 후보 검색을 빠르게 두 번 눌러도 표는 항상 마지막 요청의 결과만 반영합니다.
+5. "고객 예약 생성"(✍️ 쓰기) 클릭 → System C에서 예약이 생성되고 사이드바로 복귀합니다. 곧이어 **클릭 없이** System D 탭으로 전환되어 응대 메모에 예약정보가 자동으로 채워지고 다시 사이드바로 돌아옵니다.
+6. System D에서 인바운드 콜백이 발생하면 패널을 강제로 바꾸지 않고 뱃지만 올립니다.
+7. 모든 스텝이 결과 로그 시트에 자동 기록된 것을 확인합니다.
