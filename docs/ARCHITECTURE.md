@@ -24,7 +24,7 @@
 | 메시지 검증 | `message_router.ts` | TypeScript + zod | 메시지 타입별 스키마 검증 + 3단계 오리진 검증(self/embed-sandbox/trusted-list) |
 | 백엔드(경량) | `backend/mock_sidebar_webhook.js` | 순수 JavaScript | 스프레드시트+스크립트 런타임(Apps Script류) 흉내 — 목록/본문 이중 캐시, 멱등 쓰기 핸들러 |
 
-## 2. 모듈 구조 (System A 탭 기준)
+## 2. 모듈 구조 (포털 탭 기준)
 
 순수 JS 콘텐츠 스크립트 셸 위에 패널을 하나씩 React + TypeScript + Zustand로 옮겨가는
 점진적 마이그레이션 구조를 그대로 반영했습니다.
@@ -59,18 +59,18 @@ Manifest V3 서비스워커는 파일 하나만 등록할 수 있어, `backgroun
 
 ```mermaid
 sequenceDiagram
-    participant Page as System B 페이지 자신의 fetch
+    participant Page as 사고 관리 시스템 페이지 자신의 fetch
     participant Inject as injected_b.js (page context)
     participant Content as content_b.js (격리 world)
     participant BG as service_worker.js (허브)
-    participant Router as message_router.ts (System A)
+    participant Router as message_router.ts (포털)
     participant Iframe as 임베드 폼(iframe)
 
     Page->>Inject: POST /api/cases 응답
     Inject-->>Content: window.postMessage(INTERCEPTED_DETAIL)
     Content->>BG: chrome.runtime.sendMessage(CASE_CREATED)
-    BG->>Router: chrome.tabs.sendMessage(System A 탭)
-    Note over BG,Router: 여기서 System A 탭도 chrome.tabs.update로<br/>다시 전면에 포커스된다 (focusA)
+    BG->>Router: chrome.tabs.sendMessage(포털 탭)
+    Note over BG,Router: 여기서 포털 탭도 chrome.tabs.update로<br/>다시 전면에 포커스된다 (focusA)
     Router->>Router: state 반영 + 케이스 패널 강제 전환
 ```
 
@@ -90,7 +90,7 @@ window.fetch = async (...args) => {
 }
 ```
 
-**3-2. 콘텐츠 스크립트 ↔ 임베드 iframe** — System A 페이지엔 접수양식 폼이 iframe으로 임베드돼 있습니다. 별도 요청 ID 체계 없이 **"kind로 매칭 + 타임아웃 시 null 반환"**하는 Promise 래퍼로 요청/응답을 짝짓습니다(동시 1건 대기 전제 — §9 참고). iframe은 별도 샌드박스 도메인이라 `validatePostOrigin(event, 'embed-sandbox')`로 오리진을 검증한 뒤에만 신뢰합니다.
+**3-2. 콘텐츠 스크립트 ↔ 임베드 iframe** — 포털 페이지엔 접수양식 폼이 iframe으로 임베드돼 있습니다. 별도 요청 ID 체계 없이 **"kind로 매칭 + 타임아웃 시 null 반환"**하는 Promise 래퍼로 요청/응답을 짝짓습니다(동시 1건 대기 전제 — §9 참고). iframe은 별도 샌드박스 도메인이라 `validatePostOrigin(event, 'embed-sandbox')`로 오리진을 검증한 뒤에만 신뢰합니다.
 
 ```js
 // message_router.ts
@@ -117,7 +117,7 @@ function getEmbedFormData(kind) {
 // background/service_worker.js — 타입별로 개별 리스너를 등록하는 방식
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type !== 'INTERCEPTED_CASE') return false
-  broadcastToPortal(msg) // System A 탭 전체에 push
+  broadcastToPortal(msg) // 포털 탭 전체에 push
   sendLog({ step: 'case_created', caseId: msg.caseId, at: new Date().toISOString() })
   return false
 })
@@ -135,7 +135,7 @@ registerRuntimeHandler('INTERCEPTED_CASE', (m) => !!m.caseId, handleInterceptedC
 ## 4. 상태 관리: 2단 상태 설계
 
 - **탭 로컬 상태** (`state/store.ts`) — 새로고침하면 사라지는 휘발성 상태.
-- **허브 상태** (`service_worker.js`의 `hubState`) — 여러 탭에 걸쳐 지속돼야 하는 진행 상태. MV3 서비스워커는 유휴 시 언제든 종료(cold start)될 수 있어, 각 스텝이 끝날 때마다 재broadcast하고 System A는 로드 시 `REQUEST_STATE`로 다시 물어 복구합니다.
+- **허브 상태** (`service_worker.js`의 `hubState`) — 여러 탭에 걸쳐 지속돼야 하는 진행 상태. MV3 서비스워커는 유휴 시 언제든 종료(cold start)될 수 있어, 각 스텝이 끝날 때마다 재broadcast하고 포털은 로드 시 `REQUEST_STATE`로 다시 물어 복구합니다.
 
 ```ts
 // state/legacy_adapter.ts — 화이트리스트 가드가 있는 구버전 호환 파사드
@@ -170,7 +170,7 @@ function runOnHost(pattern, entryUrl, message, focus) {
 
 1. **뱃지(badge)** — 비활성 패널에 처리 대기 건수를 숫자로 표시.
 2. **트래킹 닷(track-dot)** — 열려 있지 않은 패널에 영향을 주는 이벤트가 오면 점으로 표시.
-3. **쓰기/읽기 태그(kind-tag)** — `✍️ 쓰기` / `📡 읽기`로 구분.
+3. **쓰기/읽기 태그(kind-tag)** — `쓰기` / `읽기`로 구분.
 
 **인터럽트 기반 자동 전환**: 핵심 이벤트(접수 카드 생성)는 강제로 패널을 전환하고, 부차적 이벤트(인바운드 콜백)는 뱃지만 올립니다.
 
@@ -193,7 +193,7 @@ sequenceDiagram
     participant Iframe as 임베드 폼
     participant BG as service_worker.js
     participant B as content_b.js
-    participant PageB as System B 페이지(fetch)
+    participant PageB as 사고 관리 시스템 페이지(fetch)
 
     User->>A: "접수 카드 생성" 클릭
     A->>Iframe: requestIframeData('intake_text')
@@ -204,14 +204,14 @@ sequenceDiagram
         A->>A: text_parser로 필드 파싱
         A->>BG: RUN_CASE_CREATION { fields }
         BG->>B: chrome.tabs.update(active:true) + sendMessage
-        Note over B: System B 탭이 화면 전면으로 전환됨
+        Note over B: 사고 관리 시스템 탭이 화면 전면으로 전환됨
         B->>B: 필드 6개를 하나씩 채우고(RPA_FIELD_DELAY_MS)<br/>제출 버튼 클릭
         B->>PageB: 제출 → POST /api/cases
         PageB-->>B: injected_b.js가 응답 가로채 전달
         B->>BG: CASE_CREATED { caseId, ... }
         BG->>BG: hubState 갱신 + 결과 로그 시트에 기록
         BG->>A: broadcast(CASE_CREATED) + focusA()
-        Note over A: System A 탭으로 자동 복귀
+        Note over A: 포털 탭으로 자동 복귀
         A->>A: 케이스 패널 강제 전환 + 상세 렌더링
     end
 ```
@@ -222,7 +222,7 @@ sequenceDiagram
 
 | 결정 | 이유 |
 |---|---|
-| 콘텐츠 스크립트 간 직접 통신 금지, 백그라운드 허브 강제 | 탭 간 결합도를 낮춰 "System C 어댑터가 System B의 존재를 몰라도 되게" 만듦 |
+| 콘텐츠 스크립트 간 직접 통신 금지, 백그라운드 허브 강제 | 탭 간 결합도를 낮춰 "차량 배차 시스템 어댑터가 사고 관리 시스템의 존재를 몰라도 되게" 만듦 |
 | `Object.freeze`로 동결된 단일 config 모듈 + `globalThis` 공유 | 서비스워커/콘텐츠 스크립트 양쪽에서 같은 상수를 참조, 중복 방지 |
 | 상관관계 ID 없는 Promise+타임아웃 기반 iframe 요청 | 동시 1건 대기 전제하에 충분히 안전하고, 요청-ID 체계보다 단순 |
 | 상태 스토어의 화이트리스트 가드 | TS 없이도 오타로 인한 "조용한 실패"를 콘솔 경고로 드러냄 |
@@ -243,7 +243,7 @@ sequenceDiagram
 
 ## 데모 시나리오
 
-1. 사이드바가 System A(포털)에 자동 주입되고 "케이스 처리" 패널이 기본 활성화됩니다.
+1. 사이드바가 포털에 자동 주입되고 "케이스 처리" 패널이 기본 활성화됩니다.
 2. 임베드된 폼에 접수양식 텍스트를 붙여넣습니다.
    ```
    고객명: 홍길동
@@ -253,8 +253,8 @@ sequenceDiagram
    위치: 서울시 강남구
    상세내용: 일반 문의 접수
    ```
-3. "접수 카드 생성"(✍️ 쓰기) 클릭 → System B 탭으로 전환되며 폼 필드가 순서대로 채워지고 제출됩니다. 완료되면 사이드바로 자동 복귀하고 접수 카드 번호가 표시됩니다.
-4. "예약/배차 자동화" 패널에서 "블록 생성"(✍️ 쓰기) → "후보 검색"(📡 읽기) 클릭 → System C 탭으로 전환되어 값이 채워지거나 결과가 조회되고, 끝나면 사이드바로 복귀합니다. 방금 생성한 블록은 현황 표에 새 행으로 추가돼 잠깐 강조됩니다. 후보 검색을 빠르게 두 번 눌러도 표는 항상 마지막 요청의 결과만 반영합니다.
-5. "고객 예약 생성"(✍️ 쓰기) 클릭 → System C에서 예약이 생성되고 사이드바로 복귀합니다. 곧이어 **클릭 없이** System D 탭으로 전환되어 응대 메모에 예약정보가 자동으로 채워지고 다시 사이드바로 돌아옵니다.
-6. System D에서 인바운드 콜백이 발생하면 패널을 강제로 바꾸지 않고 뱃지만 올립니다.
+3. "접수 카드 생성"(쓰기) 클릭 → 사고 관리 시스템 탭으로 전환되며 폼 필드가 순서대로 채워지고 제출됩니다. 완료되면 사이드바로 자동 복귀하고 접수 카드 번호가 표시됩니다.
+4. "예약/배차 자동화" 패널에서 "블록 생성"(쓰기) → "후보 검색"(읽기) 클릭 → 차량 배차 시스템 탭으로 전환되어 값이 채워지거나 결과가 조회되고, 끝나면 사이드바로 복귀합니다. 방금 생성한 블록은 현황 표에 새 행으로 추가돼 잠깐 강조됩니다. 후보 검색을 빠르게 두 번 눌러도 표는 항상 마지막 요청의 결과만 반영합니다.
+5. "고객 예약 생성"(쓰기) 클릭 → 차량 배차 시스템에서 예약이 생성되고 사이드바로 복귀합니다. 곧이어 **클릭 없이** 고객 문의 시스템 탭으로 전환되어 응대 메모에 예약정보가 자동으로 채워지고 다시 사이드바로 돌아옵니다.
+6. 고객 문의 시스템에서 인바운드 콜백이 발생하면 패널을 강제로 바꾸지 않고 뱃지만 올립니다.
 7. 모든 스텝이 결과 로그 시트에 자동 기록된 것을 확인합니다.

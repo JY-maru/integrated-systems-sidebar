@@ -2,6 +2,10 @@
 .DS_Store
 *.log
 *.pid
+CLAUDE.md
+.mcp.json
+package.json
+
 # Added by code-review-graph
 .code-review-graph/
 
