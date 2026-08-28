@@ -102,13 +102,13 @@ export function DispatchPanel() {
     <div id="panel-dispatch" className="spog-panel">
       <ResSummary />
       <input id="dispatch-block-res-input" ref={blockResRef} placeholder="예약번호" />
-      <button onClick={() => createReservationBlock(blockResRef.current?.value.trim() || '')}>예약블록 생성 ✍️</button>
+      <button onClick={() => createReservationBlock(blockResRef.current?.value.trim() || '')}>예약블록 생성 (입력)</button>
 
       <input id="dispatch-target-block-input" ref={targetBlockRef} placeholder="예약블록 번호" />
-      <button onClick={() => executeReservation(blockResRef.current?.value.trim() || '', targetBlockRef.current?.value.trim() || '')}>고객 예약 생성 ✍️</button>
+      <button onClick={() => executeReservation(blockResRef.current?.value.trim() || '', targetBlockRef.current?.value.trim() || '')}>고객 예약 생성 (입력)</button>
 
       <input id="dispatch-search-res-input" ref={searchResRef} placeholder="예약번호" />
-      <button onClick={() => startCandidateSearch(searchResRef.current?.value.trim() || '', [])}>후보 검색 📡</button>
+      <button onClick={() => startCandidateSearch(searchResRef.current?.value.trim() || '', [])}>후보 검색 (조회)</button>
       <button onClick={() => stopCandidateSearch(searchResRef.current?.value.trim() || '')}>중단</button>
       <button onClick={() => expandCandidateSearch(searchResRef.current?.value.trim() || '')}>더 넓게 검색</button>
 

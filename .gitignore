@@ -2,7 +2,6 @@
 .DS_Store
 *.log
 *.pid
-CLAUDE.md
 .mcp.json
 package.json
 
