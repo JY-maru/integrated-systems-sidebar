@@ -16,8 +16,7 @@
 있습니다. 이 문서만 예외적으로 실제 시스템 화면을 담고 있습니다 — 나머지 소스는 위
 설명대로 슈도코드입니다.
 
-## 기술 스택
-
+## 기술 스택 & 아키텍쳐
 ![React](https://img.shields.io/badge/React-20232A?style=flat&logo=react&logoColor=61DAFB)
 ![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=flat&logo=typescript&logoColor=white)
 ![Chrome Extension](https://img.shields.io/badge/Chrome_Extension-4285F4?style=flat&logo=googlechrome&logoColor=white)
@@ -31,7 +30,7 @@
 
 | 시스템 | 역할 |
 |---|---|
-| **포털** | 사이드바 상주, 업무 시작점 |
+| **구글 사이트 포털** | 사이드바 로드, 사용자 업무 시작점 |
 | **사고 관리 시스템** | 접수 건 등록·조회 |
 | **차량 배차 시스템** | 예약, 차량 배정 |
 | **고객 문의 시스템** | 고객 문의 이력·응대 메모 |
