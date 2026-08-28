@@ -11,6 +11,11 @@
 
 *원본 화질: [`docs/demo.mp4`](./docs/demo.mp4). 상세 시나리오는 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md#데모-시나리오) 참고.*
 
+실제 사내에 배포되어 사용 중인 확장의 **사용설명서**(전체 스크린샷 포함, 고객정보·사내
+식별정보는 마스킹/블러 처리)는 [`docs/user-guide.html`](./docs/user-guide.html)에서 볼 수
+있습니다. 이 문서만 예외적으로 실제 시스템 화면을 담고 있습니다 — 나머지 소스는 위
+설명대로 슈도코드입니다.
+
 ## 기술 스택
 
 ![React](https://img.shields.io/badge/React-20232A?style=flat&logo=react&logoColor=61DAFB)
