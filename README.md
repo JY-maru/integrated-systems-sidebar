@@ -7,14 +7,13 @@
 > 실제 사내 시스템명·도메인·필드명은 모두 제거하고 일반화했습니다. 실행형 데모가 아닌,
 > `extension/` 실제 소스 구조를 기준으로 한 참고용 슈도코드입니다.
 
+실제 사내에 배포되어 사용 중인 확장의 **사용설명서**([열어보기](https://jy-maru.github.io/integrated-systems-sidebar/user-guide.html), 전체 스크린샷 포함·고객정보/사내
+식별정보는 마스킹·블러 처리)입니다. 이 문서만 예외적으로 실제 시스템 화면을 담고
+있습니다 — 나머지 소스는 아래 설명대로 슈도코드입니다.
+
 ![데모: 접수 카드 생성부터 사후관리 로그까지 전체 파이프라인](./docs/demo.gif)
 
 *원본 화질: [`docs/demo.mp4`](./docs/demo.mp4). 상세 시나리오는 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md#데모-시나리오) 참고.*
-
-실제 사내에 배포되어 사용 중인 확장의 **사용설명서**(전체 스크린샷 포함, 고객정보·사내
-식별정보는 마스킹/블러 처리)는 [`docs/user-guide.html`](./docs/user-guide.html)에서 볼 수
-있습니다. 이 문서만 예외적으로 실제 시스템 화면을 담고 있습니다 — 나머지 소스는 위
-설명대로 슈도코드입니다.
 
 ## 기술 스택 & 아키텍쳐
 ![React](https://img.shields.io/badge/React-20232A?style=flat&logo=react&logoColor=61DAFB)
