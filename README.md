@@ -1,4 +1,4 @@
-# SPoG Sidebar — 4개 사내 시스템을 하나의 창(Single Pane of Glass)으로 묶는 크롬 확장
+# SPoG Sidebar : 4개 사내 시스템을 하나의 창(Single Pane of Glass)으로 묶는 크롬 확장프로그램
 
 서로 연동되지 않는 4개의 사내 웹 시스템(포털/사고 관리 시스템/차량 배차 시스템/고객 문의
 시스템)을 크롬 확장(Manifest V3) 하나로 이어붙여, 화면 전환 없이 사이드바에서 업무를
