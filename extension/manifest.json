@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "SPOG Demo — 접수 자동화 파이프라인",
+  "name": "SPoG Sidebar — 접수 자동화 파이프라인",
   "version": "0.1.0",
   "description": "4개의 서로 연동되지 않는 사내 시스템(포털/케이스 관리/예약·배차 관리/고객 응대)을 하나의 사이드바로 이어붙여 접수양식 → 접수 카드 생성 → 예약·배차 자동화 → 고객 응대 반영 → 로그 기록을 자동화하는 포트폴리오 데모.",
   "permissions": ["tabs", "scripting", "storage"],
